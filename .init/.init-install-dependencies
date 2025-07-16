@@ -1,0 +1,4 @@
+{
+    "command": "source venv/bin/activate && pip install -r requirements.txt",
+    "working_directory": "/home/kavia/workspace/code-generation/jira-issue-export-import-tool-26429a48/jira_syncer_backend"
+}
