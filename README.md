@@ -32,3 +32,6 @@
 
 ### FastAPI docs:
 Once running locally, visit: [http://localhost:8000/docs](http://localhost:8000/docs) for interactive API docs.
+
+### Note:
+The backend now uses in-memory session storage instead of a database. Sessions will be lost when the server restarts.

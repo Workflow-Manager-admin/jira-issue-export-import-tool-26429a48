@@ -2,9 +2,7 @@
 fastapi==0.115.7
 uvicorn==0.34.0
 
-# ORM and Database (SQLAlchemy + PyMySQL for MySQL support)
-sqlalchemy==2.0.37
-pymysql==1.1.1
+=======
 
 # Request Handling/HTTP & External APIs (Jira integration)
 requests==2.32.3
