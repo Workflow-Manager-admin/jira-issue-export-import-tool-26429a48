@@ -1,20 +1,17 @@
-from fastapi import FastAPI, HTTPException, Depends, Header, status
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from typing import Optional, List
 from datetime import datetime
 import logging
-import os
 
 from ..database import get_db, create_tables
 from ..schemas import (
     AuthRequest, AuthResponse, ProjectListResponse, ProjectResponse,
-    IssueTypeListResponse, IssueTypeResponse, SessionInfo, ErrorResponse
+    IssueTypeListResponse, IssueTypeResponse, SessionInfo
 )
 from ..auth_service import AuthService
 from ..models import UserSession, Project, IssueType
-from ..jira_service import JiraService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

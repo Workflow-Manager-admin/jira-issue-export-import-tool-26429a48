@@ -1,11 +1,10 @@
 import secrets
-import hashlib
 from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 import os
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
-from .models import UserSession, Project, IssueType
+from .models import UserSession
 from .jira_service import JiraService
 import logging
 
