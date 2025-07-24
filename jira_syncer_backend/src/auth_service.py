@@ -1,18 +1,15 @@
 import secrets
-import hashlib
 from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 import os
-from typing import Optional, Tuple
-from sqlalchemy.orm import Session
-from .models import UserSession, Project, IssueType
+from typing import Optional, Tuple, Dict
 from .jira_service import JiraService
 import logging
 
 logger = logging.getLogger(__name__)
 
 class AuthService:
-    """Service class for authentication and session management"""
+    """Service class for authentication and session management using in-memory storage"""
     
     def __init__(self):
         # Generate or load encryption key for sensitive data
@@ -20,6 +17,9 @@ class AuthService:
         if isinstance(self.encryption_key, str):
             self.encryption_key = self.encryption_key.encode()
         self.cipher = Fernet(self.encryption_key)
+        
+        # In-memory session storage
+        self.sessions: Dict[str, dict] = {}
         
     # PUBLIC_INTERFACE
     def generate_session_token(self) -> str:
@@ -37,7 +37,7 @@ class AuthService:
         return self.cipher.decrypt(encrypted_token.encode()).decode()
     
     # PUBLIC_INTERFACE
-    def authenticate_user(self, jira_email: str, jira_token: str, jira_domain: str, db: Session) -> Tuple[bool, Optional[str], Optional[str]]:
+    def authenticate_user(self, jira_email: str, jira_token: str, jira_domain: str) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Authenticate user with Jira and create session
         Returns: (success, session_token, error_message)
@@ -54,35 +54,38 @@ class AuthService:
                 return False, None, "Failed to retrieve user information from Jira"
             
             # Check if user already has an active session
-            existing_session = db.query(UserSession).filter(
-                UserSession.jira_email == jira_email,
-                UserSession.jira_domain == jira_domain,
-                UserSession.is_active == True,
-                UserSession.expires_at > datetime.utcnow()
-            ).first()
+            existing_session_token = None
+            current_time = datetime.utcnow()
             
-            if existing_session:
+            for token, session_data in self.sessions.items():
+                if (session_data['jira_email'] == jira_email and 
+                    session_data['jira_domain'] == jira_domain and 
+                    session_data['is_active'] and 
+                    session_data['expires_at'] > current_time):
+                    existing_session_token = token
+                    break
+            
+            if existing_session_token:
                 # Update existing session
-                existing_session.jira_token = self.encrypt_token(jira_token)
-                existing_session.expires_at = datetime.utcnow() + timedelta(hours=24)
-                db.commit()
-                return True, existing_session.session_token, None
+                self.sessions[existing_session_token]['jira_token'] = self.encrypt_token(jira_token)
+                self.sessions[existing_session_token]['expires_at'] = current_time + timedelta(hours=24)
+                return True, existing_session_token, None
             
             # Create new session
             session_token = self.generate_session_token()
             encrypted_token = self.encrypt_token(jira_token)
             
-            new_session = UserSession(
-                session_token=session_token,
-                jira_email=jira_email,
-                jira_token=encrypted_token,
-                jira_domain=jira_domain,
-                expires_at=datetime.utcnow() + timedelta(hours=24),
-                is_active=True
-            )
+            session_data = {
+                'session_token': session_token,
+                'jira_email': jira_email,
+                'jira_token': encrypted_token,
+                'jira_domain': jira_domain,
+                'created_at': current_time,
+                'expires_at': current_time + timedelta(hours=24),
+                'is_active': True
+            }
             
-            db.add(new_session)
-            db.commit()
+            self.sessions[session_token] = session_data
             
             return True, session_token, None
             
@@ -91,45 +94,46 @@ class AuthService:
             return False, None, f"Authentication failed: {str(e)}"
     
     # PUBLIC_INTERFACE
-    def get_session(self, session_token: str, db: Session) -> Optional[UserSession]:
+    def get_session(self, session_token: str) -> Optional[dict]:
         """Get active session by token"""
-        return db.query(UserSession).filter(
-            UserSession.session_token == session_token,
-            UserSession.is_active == True,
-            UserSession.expires_at > datetime.utcnow()
-        ).first()
+        session_data = self.sessions.get(session_token)
+        if session_data and session_data['is_active'] and session_data['expires_at'] > datetime.utcnow():
+            return session_data
+        return None
     
     # PUBLIC_INTERFACE
-    def refresh_session(self, session_token: str, db: Session) -> bool:
+    def refresh_session(self, session_token: str) -> bool:
         """Refresh session expiration time"""
-        session = self.get_session(session_token, db)
+        session = self.get_session(session_token)
         if session:
-            session.expires_at = datetime.utcnow() + timedelta(hours=24)
-            db.commit()
+            session['expires_at'] = datetime.utcnow() + timedelta(hours=24)
             return True
         return False
     
     # PUBLIC_INTERFACE
-    def invalidate_session(self, session_token: str, db: Session) -> bool:
+    def invalidate_session(self, session_token: str) -> bool:
         """Invalidate a session"""
-        session = self.get_session(session_token, db)
+        session = self.get_session(session_token)
         if session:
-            session.is_active = False
-            db.commit()
+            session['is_active'] = False
             return True
         return False
     
     # PUBLIC_INTERFACE
-    def get_jira_service(self, session: UserSession) -> JiraService:
+    def get_jira_service(self, session: dict) -> JiraService:
         """Get Jira service instance for a session"""
-        decrypted_token = self.decrypt_token(session.jira_token)
-        return JiraService(session.jira_domain, session.jira_email, decrypted_token)
+        decrypted_token = self.decrypt_token(session['jira_token'])
+        return JiraService(session['jira_domain'], session['jira_email'], decrypted_token)
     
     # PUBLIC_INTERFACE
-    def cleanup_expired_sessions(self, db: Session) -> int:
+    def cleanup_expired_sessions(self) -> int:
         """Clean up expired sessions and return count of cleaned sessions"""
-        expired_count = db.query(UserSession).filter(
-            UserSession.expires_at < datetime.utcnow()
-        ).update({UserSession.is_active: False})
-        db.commit()
+        current_time = datetime.utcnow()
+        expired_count = 0
+        
+        for session_data in self.sessions.values():
+            if session_data['expires_at'] < current_time:
+                session_data['is_active'] = False
+                expired_count += 1
+        
         return expired_count
